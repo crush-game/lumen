@@ -145,6 +145,14 @@ class LumenStore:
         )
         return _requirement_from_row(row)
 
+    def get_requirement(self, requirement_id: str) -> Requirement:
+        row = self._require_row(
+            "SELECT * FROM lumen_requirements WHERE requirement_id = ?",
+            (requirement_id,),
+            "requirement",
+        )
+        return _requirement_from_row(row)
+
     def create_run(
         self,
         *,
@@ -301,6 +309,14 @@ class LumenStore:
         )
         return _artifact_from_row(row)
 
+    def get_artifact(self, artifact_id: str) -> Artifact:
+        row = self._require_row(
+            "SELECT * FROM lumen_artifacts WHERE artifact_id = ?",
+            (artifact_id,),
+            "artifact",
+        )
+        return _artifact_from_row(row)
+
     def append_trace_event(
         self,
         *,
@@ -320,6 +336,23 @@ class LumenStore:
         )
         self._connection.commit()
         return TraceEvent(event_id=event_id, run_id=run_id, event_type=event_type, payload=payload, created_at=now)
+
+    def list_trace_events(self, run_id: str) -> list[TraceEvent]:
+        self.get_run(run_id)
+        rows = self._connection.execute(
+            "SELECT * FROM lumen_trace_events WHERE run_id = ? ORDER BY created_at, event_id",
+            (run_id,),
+        ).fetchall()
+        return [
+            TraceEvent(
+                event_id=row["event_id"],
+                run_id=row["run_id"],
+                event_type=row["event_type"],
+                payload=_from_json(row["payload"]),
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
 
     def _initialize(self) -> None:
         self._connection.executescript(
