@@ -7,7 +7,7 @@ import sys
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from langchain_core.language_models import BaseChatModel
 
@@ -31,6 +31,13 @@ from poirot.backend.agents.runtime.run_manager import RunManager
 from poirot.backend.agents.agent_tools.available import get_available_tools, select_search_tool
 from poirot.backend.agents.multiagent.bootstrap import MultiAgentSetup, setup_multiagent
 from poirot.backend.agents.multiagent.config import load_multiagent_config
+from poirot.backend.lumen.application.completion import VerificationEvidence
+from poirot.backend.lumen.application.runtime import (
+    CompletionContractError,
+    LumenRuntimeAdapter,
+    LumenTaskSpec,
+)
+from poirot.backend.lumen.infrastructure.sqlite_store import LumenStore
 
 _PROJECT_ROOT = Path(__file__).parents[3]
 _CST = timezone(timedelta(hours=8))
@@ -124,6 +131,51 @@ class AppRuntime:
         except Exception as exc:
             self.run_manager.mark_failed(context.run_id, str(exc))
             raise
+
+    def run_development_task(
+        self,
+        task_spec: LumenTaskSpec,
+        evidence_provider: Callable[[AgentRunResult, LumenStore], VerificationEvidence],
+        thread_id: str | None = None,
+        user_id: str | None = "default-user",
+        run_id: str | None = None,
+    ) -> AgentRunResult:
+        """Opt-in development-task entrypoint guarded by a Lumen contract.
+
+        The regular ``run_question`` path remains unchanged. Callers of this
+        method must provide a structured task spec and an independent evidence
+        provider; the Agent's final report alone cannot mark the run successful.
+        """
+
+        effective_thread_id = thread_id or self.thread_id
+        context = self.run_manager.create_run(
+            thread_id=effective_thread_id,
+            user_id=user_id,
+            run_id=run_id,
+            model_name=self.researcher_model_name,
+            thread_dir=self.thread_dir,
+        )
+        self.run_manager.mark_running(context.run_id)
+        database_path = self.thread_dir / "lumen" / f"{task_spec.task_id}.sqlite3"
+        adapter = LumenRuntimeAdapter(LumenStore(database_path))
+        try:
+            result = adapter.execute(
+                task_spec,
+                run_id=context.run_id,
+                model_name=self.researcher_model_name,
+                execute_agent=lambda: self.leader_agent.run(question=task_spec.description, run_context=context),
+                collect_evidence=lambda agent_result: evidence_provider(agent_result, adapter.store),
+            )
+            self.run_manager.mark_success(context.run_id)
+            return result
+        except CompletionContractError as exc:
+            self.run_manager.mark_failed(context.run_id, str(exc))
+            raise
+        except Exception as exc:
+            self.run_manager.mark_failed(context.run_id, str(exc))
+            raise
+        finally:
+            adapter.close()
 
     def switch_expert_mode(self, expert_mode: bool) -> AppRuntime:
         """切换 expert 模式，精准重建受影响部分，保留 thread 连续性。

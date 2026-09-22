@@ -7,11 +7,21 @@ from poirot.backend.lumen.application.completion import (
     VerificationEvidence,
     VerificationResult,
 )
+from poirot.backend.lumen.application.runtime import (
+    CompletionContractError,
+    LumenRuntimeAdapter,
+    LumenTaskSpec,
+    RequirementSpec,
+)
 
 __all__ = [
     "CheckResult",
+    "CompletionContractError",
     "CompletionVerifier",
     "ContractFailure",
     "VerificationEvidence",
     "VerificationResult",
+    "LumenRuntimeAdapter",
+    "LumenTaskSpec",
+    "RequirementSpec",
 ]
